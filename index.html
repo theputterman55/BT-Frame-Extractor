@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1720">
+<title>BT Frame Extractor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #0f1720;
+    --panel: #18222e;
+    --line: #2a3848;
+    --text: #e8eef5;
+    --muted: #8da0b3;
+    --accent: #f5a524;
+    --accent-ink: #1a1203;
+    --ok: #3ecf8e;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px 16px 48px; padding-top: max(16px, env(safe-area-inset-top)); }
+  h1 { font-size: 20px; margin: 4px 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  button, .btn { appearance: none; border: 0; border-radius: 12px; padding: 14px 16px; font: inherit; font-weight: 600;
+    background: var(--accent); color: var(--accent-ink); width: 100%; cursor: pointer; text-align: center; display: block; text-decoration: none; }
+  button.secondary, .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  label.field { display: block; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+  label.field span.val { float: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  select, input[type=number], input[type=text] { width: 100%; margin-top: 6px; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: #0f1720; color: var(--text); font: inherit; }
+  input[type=range] { width: 100%; margin-top: 8px; accent-color: var(--accent); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .meta { font-size: 14px; color: var(--muted); margin-top: 10px; word-break: break-word; }
+  .meta b { color: var(--text); font-weight: 600; }
+  video { width: 100%; max-height: 240px; border-radius: 10px; background: #000; margin-top: 10px; }
+  .bar { height: 10px; border-radius: 999px; background: #0f1720; border: 1px solid var(--line); overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .1s linear; }
+  .status { font-size: 14px; margin-top: 8px; min-height: 20px; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--bad); }
+  .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+  .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: #000; }
+  .stack > * + * { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .hint { font-size: 13px; color: var(--muted); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>BT Frame Extractor</h1>
+  <p class="sub">Pull frames from a full-length video, right on your phone. Nothing is uploaded.</p>
+
+  <section class="card">
+    <h2>1. Pick a video</h2>
+    <button id="pickBtn" type="button">Choose video</button>
+    <input id="file" type="file" accept="video/*">
+    <div id="info" class="meta hidden"></div>
+    <video id="preview" class="hidden" muted playsinline controls preload="metadata"></video>
+  </section>
+
+  <section class="card">
+    <h2>2. Settings</h2>
+    <label class="field">Frames per second
+      <select id="fps">
+        <option value="1">1 per second</option>
+        <option value="2">2 per second</option>
+        <option value="3">3 per second</option>
+        <option value="5" selected>5 per second</option>
+        <option value="10">10 per second</option>
+        <option value="15">15 per second</option>
+        <option value="30">30 per second (heavy)</option>
+      </select>
+    </label>
+    <label class="field">Image size (longest side)
+      <select id="size">
+        <option value="0">Original size</option>
+        <option value="1920">1920 px</option>
+        <option value="1280" selected>1280 px</option>
+        <option value="960">960 px</option>
+        <option value="640">640 px (YOLO-sized)</option>
+      </select>
+    </label>
+    <label class="field">JPEG quality <span class="val" id="qVal">90</span>
+      <input id="quality" type="range" min="50" max="100" value="90">
+    </label>
+    <div class="row">
+      <label class="field">Start (sec)
+        <input id="start" type="number" min="0" step="0.1" value="0" inputmode="decimal">
+      </label>
+      <label class="field">End (sec)
+        <input id="end" type="number" min="0" step="0.1" value="" placeholder="end of video" inputmode="decimal">
+      </label>
+    </div>
+    <div id="estimate" class="meta"></div>
+  </section>
+
+  <section class="card">
+    <h2>3. Extract</h2>
+    <div class="stack">
+      <button id="goBtn" type="button" disabled>Extract frames</button>
+      <button id="stopBtn" type="button" class="secondary hidden">Stop</button>
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="status" class="status"></div>
+    <div id="thumbs" class="thumbs"></div>
+    <div id="done" class="stack hidden" style="margin-top:12px">
+      <button id="saveBtn" type="button">Save ZIP</button>
+      <button id="shareBtn" type="button" class="secondary hidden">Share ZIP&hellip;</button>
+    </div>
+  </section>
+
+  <details class="card">
+    <summary>About the ZIP</summary>
+    <p class="hint">Each ZIP holds numbered JPEG frames plus <b>frames.csv</b> (frame file, time in seconds, width, height)
+    and <b>source.json</b> (video name, length, settings). The timestamps let you trace any frame back to its spot in the video.</p>
+    <p class="hint">Tip: for training data, a few hundred varied frames across many throws beats thousands of near-duplicates.
+    Try 3 to 5 frames per second.</p>
+  </details>
+</main>
+
+<script>
+"use strict";
+
+/* ---------- tiny ZIP writer (store only, no compression; JPEGs are already compressed) ---------- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+class ZipBuilder {
+  constructor() { this.parts = []; this.entries = []; this.offset = 0; this.enc = new TextEncoder(); }
+  _dos(date) {
+    const t = ((date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1)) & 0xFFFF;
+    const d = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xFFFF;
+    return { t, d };
+  }
+  async addBlob(name, blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    this.addBytes(name, bytes, blob);
+  }
+  addBytes(name, bytes, blobForOutput) {
+    const nameBytes = this.enc.encode(name);
+    const crc = crc32(bytes);
+    const size = bytes.length;
+    const { t, d } = this._dos(new Date());
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true);
+    h.setUint16(4, 20, true);
+    h.setUint16(6, 0x0800, true);      // UTF-8 names
+    h.setUint16(8, 0, true);           // store
+    h.setUint16(10, t, true);
+    h.setUint16(12, d, true);
+    h.setUint32(14, crc, true);
+    h.setUint32(18, size, true);
+    h.setUint32(22, size, true);
+    h.setUint16(26, nameBytes.length, true);
+    h.setUint16(28, 0, true);
+    this.parts.push(h.buffer, nameBytes, blobForOutput || bytes);
+    this.entries.push({ nameBytes, crc, size, t, d, offset: this.offset });
+    this.offset += 30 + nameBytes.length + size;
+  }
+  addText(name, text) { this.addBytes(name, this.enc.encode(text)); }
+  finish() {
+    const cdStart = this.offset;
+    let cdSize = 0;
+    for (const e of this.entries) {
+      const h = new DataView(new ArrayBuffer(46));
+      h.setUint32(0, 0x02014b50, true);
+      h.setUint16(4, 20, true);
+      h.setUint16(6, 20, true);
+      h.setUint16(8, 0x0800, true);
+      h.setUint16(10, 0, true);
+      h.setUint16(12, e.t, true);
+      h.setUint16(14, e.d, true);
+      h.setUint32(16, e.crc, true);
+      h.setUint32(20, e.size, true);
+      h.setUint32(24, e.size, true);
+      h.setUint16(28, e.nameBytes.length, true);
+      h.setUint16(30, 0, true);
+      h.setUint16(32, 0, true);
+      h.setUint16(34, 0, true);
+      h.setUint16(36, 0, true);
+      h.setUint32(38, 0, true);
+      h.setUint32(42, e.offset, true);
+      this.parts.push(h.buffer, e.nameBytes);
+      cdSize += 46 + e.nameBytes.length;
+    }
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, this.entries.length, true);
+    end.setUint16(10, this.entries.length, true);
+    end.setUint32(12, cdSize, true);
+    end.setUint32(16, cdStart, true);
+    this.parts.push(end.buffer);
+    return new Blob(this.parts, { type: "application/zip" });
+  }
+}
+
+/* ---------- UI + extraction ---------- */
+const $ = id => document.getElementById(id);
+const el = {
+  pick: $("pickBtn"), file: $("file"), info: $("info"), preview: $("preview"),
+  fps: $("fps"), size: $("size"), quality: $("quality"), qVal: $("qVal"),
+  start: $("start"), end: $("end"), estimate: $("estimate"),
+  go: $("goBtn"), stop: $("stopBtn"), bar: $("bar"), status: $("status"),
+  thumbs: $("thumbs"), done: $("done"), save: $("saveBtn"), share: $("shareBtn")
+};
+let current = null;      // { file, url, duration, w, h }
+let zipBlob = null, zipName = "frames.zip";
+let cancelled = false, running = false;
+
+const pad = (n, w) => String(n).padStart(w, "0");
+const fmtDur = s => { const m = Math.floor(s / 60); return (m ? m + "m " : "") + (s - m * 60).toFixed(1) + "s"; };
+const fmtMB = b => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + " MB";
+const safeName = n => n.replace(/\.[^.]+$/, "").replace(/[^\w\-]+/g, "_").slice(0, 40) || "video";
+
+function setStatus(msg, cls) { el.status.textContent = msg; el.status.className = "status" + (cls ? " " + cls : ""); }
+
+function range() {
+  if (!current) return null;
+  const s = Math.max(0, parseFloat(el.start.value) || 0);
+  let e = parseFloat(el.end.value);
+  if (!isFinite(e) || e <= 0 || e > current.duration) e = current.duration;
+  return { s, e: Math.max(s, e) };
+}
+function plan() {
+  const r = range();
+  if (!r) return null;
+  const fps = parseFloat(el.fps.value);
+  const span = r.e - r.s;
+  const count = Math.max(1, Math.floor(span * fps - 1e-6) + 1);
+  const times = [];
+  for (let i = 0; i < count; i++) {
+    const t = r.s + i / fps;
+    if (t > r.e + 1e-6) break;
+    times.push(Math.min(t, Math.max(0, current.duration - 0.001)));
+  }
+  return { fps, times, r };
+}
+function outSize() {
+  const max = parseInt(el.size.value, 10);
+  let w = current.w, h = current.h;
+  if (max && Math.max(w, h) > max) {
+    const k = max / Math.max(w, h);
+    w = Math.round(w * k); h = Math.round(h * k);
+  }
+  return { w: w - (w % 2), h: h - (h % 2) };
+}
+function updateEstimate() {
+  if (!current) { el.estimate.textContent = ""; return; }
+  const p = plan();
+  const s = outSize();
+  const q = parseInt(el.quality.value, 10) / 100;
+  // rough JPEG size guess per frame
+  const per = s.w * s.h * (0.08 + q * 0.35);
+  el.estimate.innerHTML = "About <b>" + p.times.length + " frames</b> at " + s.w + "&times;" + s.h +
+    ", roughly <b>" + fmtMB(per * p.times.length) + "</b> total.";
+}
+["change", "input"].forEach(ev => {
+  [el.fps, el.size, el.start, el.end].forEach(x => x.addEventListener(ev, updateEstimate));
+});
+el.quality.addEventListener("input", () => { el.qVal.textContent = el.quality.value; updateEstimate(); });
+
+el.pick.addEventListener("click", () => el.file.click());
+el.file.addEventListener("change", () => {
+  const f = el.file.files && el.file.files[0];
+  if (f) loadFile(f);
+});
+
+function loadFile(f) {
+  if (running) return;
+  if (current) URL.revokeObjectURL(current.url);
+  zipBlob = null;
+  el.done.classList.add("hidden");
+  el.thumbs.innerHTML = "";
+  el.bar.style.width = "0%";
+  current = null;
+  el.go.disabled = true;
+  setStatus("Reading video…");
+  const url = URL.createObjectURL(f);
+  const v = el.preview;
+  v.classList.remove("hidden");
+  v.src = url;
+  v.onloadedmetadata = () => {
+    if (!isFinite(v.duration) || !v.videoWidth) {
+      setStatus("Could not read this video's details.", "bad");
+      return;
+    }
+    current = { file: f, url, duration: v.duration, w: v.videoWidth, h: v.videoHeight };
+    el.info.classList.remove("hidden");
+    el.info.innerHTML = "<b>" + f.name.replace(/</g, "&lt;") + "</b><br>" +
+      fmtDur(v.duration) + " &middot; " + v.videoWidth + "&times;" + v.videoHeight + " &middot; " + fmtMB(f.size);
+    el.end.placeholder = "end (" + v.duration.toFixed(1) + ")";
+    el.go.disabled = false;
+    setStatus("Ready.");
+    updateEstimate();
+  };
+  v.onerror = () => setStatus("This browser could not play that video. Try a different file.", "bad");
+}
+
+function seekTo(video, t) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = ok => {
+      if (done) return;
+      done = true;
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onErr);
+      clearTimeout(timer);
+      ok ? resolve() : reject(new Error("seek failed at " + t.toFixed(2) + "s"));
+    };
+    const onSeeked = () => finish(true);
+    const onErr = () => finish(false);
+    const timer = setTimeout(() => finish(false), 15000);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("error", onErr);
+    video.currentTime = t;
+  });
+}
+const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
+const toBlob = (canvas, q) => new Promise(r => canvas.toBlob(r, "image/jpeg", q));
+
+async function extract() {
+  if (!current || running) return;
+  running = true; cancelled = false;
+  zipBlob = null;
+  el.done.classList.add("hidden");
+  el.thumbs.innerHTML = "";
+  el.go.disabled = true;
+  el.stop.classList.remove("hidden");
+  [el.fps, el.size, el.quality, el.start, el.end, el.pick].forEach(x => x.disabled = true);
+
+  const video = document.createElement("video");
+  video.muted = true; video.playsInline = true; video.preload = "auto";
+  video.src = current.url;
+
+  const p = plan();
+  const { w, h } = outSize();
+  const q = parseInt(el.quality.value, 10) / 100;
+  const base = safeName(current.file.name);
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const zip = new ZipBuilder();
+  const rows = ["file,time_sec,width,height"];
+  const total = p.times.length;
+  let made = 0;
+
+  try {
+    await new Promise((res, rej) => {
+      if (video.readyState >= 1) return res();
+      video.onloadedmetadata = () => res();
+      video.onerror = () => rej(new Error("video failed to load"));
+    });
+    const digits = Math.max(5, String(total).length);
+    for (let i = 0; i < total; i++) {
+      if (cancelled) break;
+      const t = p.times[i];
+      await seekTo(video, t);
+      ctx.drawImage(video, 0, 0, w, h);
+      const blob = await toBlob(canvas, q);
+      if (!blob) throw new Error("could not encode frame " + (i + 1));
+      const name = base + "_" + pad(i + 1, digits) + "_t" + t.toFixed(3) + "s.jpg";
+      await zip.addBlob(name, blob);
+      rows.push(name + "," + t.toFixed(3) + "," + w + "," + h);
+      made++;
+      if (made <= 8 || made % Math.ceil(total / 8) === 0) addThumb(blob);
+      el.bar.style.width = ((i + 1) / total * 100).toFixed(1) + "%";
+      setStatus("Frame " + (i + 1) + " of " + total + " (" + t.toFixed(2) + "s)");
+      if (i % 4 === 3) await nextPaint();
+    }
+    if (made === 0) throw new Error("no frames were made");
+    zip.addText("frames.csv", rows.join("\n") + "\n");
+    zip.addText("source.json", JSON.stringify({
+      source_file: current.file.name,
+      duration_sec: +current.duration.toFixed(3),
+      source_size: current.w + "x" + current.h,
+      output_size: w + "x" + h,
+      fps: p.fps,
+      start_sec: p.r.s,
+      end_sec: p.r.e,
+      jpeg_quality: q,
+      frames: made,
+      stopped_early: cancelled,
+      created: new Date().toISOString()
+    }, null, 2) + "\n");
+    zipBlob = zip.finish();
+    zipName = base + "_frames_" + made + ".zip";
+    el.done.classList.remove("hidden");
+    el.save.textContent = "Save ZIP (" + fmtMB(zipBlob.size) + ")";
+    const testFile = new File([zipBlob], zipName, { type: "application/zip" });
+    if (navigator.canShare && navigator.canShare({ files: [testFile] })) el.share.classList.remove("hidden");
+    setStatus((cancelled ? "Stopped. " : "Done. ") + made + " frames ready.", "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus("Problem: " + err.message, "bad");
+  } finally {
+    video.removeAttribute("src"); video.load();
+    running = false;
+    el.stop.classList.add("hidden");
+    el.go.disabled = false;
+    [el.fps, el.size, el.quality, el.start, el.end, el.pick].forEach(x => x.disabled = false);
+  }
+}
+function addThumb(blob) {
+  const img = new Image();
+  const u = URL.createObjectURL(blob);
+  img.onload = () => URL.revokeObjectURL(u);
+  img.src = u;
+  el.thumbs.appendChild(img);
+}
+
+el.go.addEventListener("click", extract);
+el.stop.addEventListener("click", () => { cancelled = true; setStatus("Stopping…"); });
+el.save.addEventListener("click", () => {
+  if (!zipBlob) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(zipBlob);
+  a.download = zipName;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 30000);
+});
+el.share.addEventListener("click", async () => {
+  if (!zipBlob) return;
+  try {
+    await navigator.share({ files: [new File([zipBlob], zipName, { type: "application/zip" })], title: zipName });
+  } catch (e) { if (e.name !== "AbortError") setStatus("Share failed: " + e.message, "bad"); }
+});
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
