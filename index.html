@@ -31,6 +31,7 @@
   button, .btn { appearance: none; border: 0; border-radius: 12px; padding: 14px 16px; font: inherit; font-weight: 600;
     background: var(--accent); color: var(--accent-ink); width: 100%; cursor: pointer; text-align: center; display: block; text-decoration: none; }
   button.secondary, .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button.small { padding: 10px 12px; font-size: 14px; }
   button:disabled { opacity: .45; cursor: not-allowed; }
   input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   label.field { display: block; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
@@ -51,8 +52,14 @@
   .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: #000; }
   .stack > * + * { margin-top: 10px; }
   details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
-  .hint { font-size: 13px; color: var(--muted); }
+  .hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
   .hidden { display: none !important; }
+  .zonewrap { display: flex; justify-content: center; margin-top: 8px; }
+  #zonePad { max-width: 100%; max-height: 52vh; width: auto; height: auto; touch-action: none;
+    border-radius: 10px; background: #000; cursor: crosshair; }
+  #graph { width: 100%; height: 90px; display: block; margin-top: 10px; border-radius: 8px;
+    background: #0f1720; border: 1px solid var(--line); }
+  .sep { height: 1px; background: var(--line); margin: 14px 0 4px; }
 </style>
 </head>
 <body>
@@ -70,13 +77,56 @@
 
   <section class="card">
     <h2>2. Settings</h2>
-    <label class="field">Frames per second
+    <label class="field">Mode
+      <select id="mode">
+        <option value="motion" selected>Motion-triggered (skip still moments)</option>
+        <option value="all">Every frame at a set rate</option>
+      </select>
+    </label>
+
+    <div id="motionBox" class="stack" style="margin-top:6px">
+      <div>
+        <label class="field">Draw a box around the players <span class="val" id="zoneTxt">whole frame</span></label>
+        <div class="zonewrap"><canvas id="zonePad" width="320" height="240"></canvas></div>
+        <input id="padTime" type="range" min="0" max="1" step="0.05" value="0" aria-label="Pick a moment to draw on">
+        <button id="clearZone" type="button" class="secondary small" style="margin-top:8px">Clear box</button>
+        <p class="hint">Drag on the picture. Only movement inside the box counts, so cars and wind outside it are ignored. Slide to pick a moment where both players are clearly visible.</p>
+      </div>
+      <label class="field">Sensitivity
+        <select id="sens">
+          <option value="high">High (catches small arm motion)</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low (only big movements)</option>
+        </select>
+      </label>
+      <div class="row">
+        <label class="field" style="margin-top:0">Seconds before
+          <input id="pre" type="number" min="0" max="10" step="0.5" value="1" inputmode="decimal">
+        </label>
+        <label class="field" style="margin-top:0">Seconds after
+          <input id="post" type="number" min="0" max="15" step="0.5" value="2" inputmode="decimal">
+        </label>
+      </div>
+      <details>
+        <summary>Advanced</summary>
+        <label class="field">Motion scan rate
+          <select id="scanFps">
+            <option value="10">10 per second</option>
+            <option value="15" selected>15 per second</option>
+            <option value="20">20 per second (slower)</option>
+          </select>
+        </label>
+      </details>
+      <div class="sep"></div>
+    </div>
+
+    <label class="field"><span id="fpsLabel">Frames per second saved</span>
       <select id="fps">
         <option value="1">1 per second</option>
         <option value="2">2 per second</option>
         <option value="3">3 per second</option>
-        <option value="5" selected>5 per second</option>
-        <option value="10">10 per second</option>
+        <option value="5">5 per second</option>
+        <option value="10" selected>10 per second</option>
         <option value="15">15 per second</option>
         <option value="30">30 per second (heavy)</option>
       </select>
@@ -107,9 +157,12 @@
   <section class="card">
     <h2>3. Extract</h2>
     <div class="stack">
-      <button id="goBtn" type="button" disabled>Extract frames</button>
+      <button id="goBtn" type="button" disabled>Scan for motion</button>
+      <button id="rescanBtn" type="button" class="secondary hidden">Scan again</button>
       <button id="stopBtn" type="button" class="secondary hidden">Stop</button>
     </div>
+    <canvas id="graph" class="hidden"></canvas>
+    <div id="motionSummary" class="meta hidden"></div>
     <div class="bar"><i id="bar"></i></div>
     <div id="status" class="status"></div>
     <div id="thumbs" class="thumbs"></div>
@@ -121,10 +174,12 @@
 
   <details class="card">
     <summary>About the ZIP</summary>
-    <p class="hint">Each ZIP holds numbered JPEG frames plus <b>frames.csv</b> (frame file, time in seconds, width, height)
-    and <b>source.json</b> (video name, length, settings). The timestamps let you trace any frame back to its spot in the video.</p>
-    <p class="hint">Tip: for training data, a few hundred varied frames across many throws beats thousands of near-duplicates.
-    Try 3 to 5 frames per second.</p>
+    <p class="hint">Each ZIP holds numbered JPEG frames plus <b>frames.csv</b> (frame file, time in seconds, width, height,
+    motion event number, motion score, and which side the motion was on: L or R) and <b>source.json</b> (video name, length, settings).
+    The timestamps let you trace any frame back to its spot in the video.</p>
+    <p class="hint">In motion mode, the graph shows movement over time. The shaded bands are the parts that get saved.
+    Change sensitivity or the before/after seconds and the bands update instantly without scanning again.</p>
+    <p class="hint">Tip: for training data, a few hundred varied frames across many throws beats thousands of near-duplicates.</p>
   </details>
 </main>
 
@@ -219,19 +274,35 @@ class ZipBuilder {
 const $ = id => document.getElementById(id);
 const el = {
   pick: $("pickBtn"), file: $("file"), info: $("info"), preview: $("preview"),
+  mode: $("mode"), motionBox: $("motionBox"), zonePad: $("zonePad"), padTime: $("padTime"),
+  clearZone: $("clearZone"), zoneTxt: $("zoneTxt"), sens: $("sens"), pre: $("pre"), post: $("post"),
+  scanFps: $("scanFps"), fpsLabel: $("fpsLabel"),
   fps: $("fps"), size: $("size"), quality: $("quality"), qVal: $("qVal"),
   start: $("start"), end: $("end"), estimate: $("estimate"),
-  go: $("goBtn"), stop: $("stopBtn"), bar: $("bar"), status: $("status"),
+  go: $("goBtn"), rescan: $("rescanBtn"), stop: $("stopBtn"), bar: $("bar"), status: $("status"),
+  graph: $("graph"), summary: $("motionSummary"),
   thumbs: $("thumbs"), done: $("done"), save: $("saveBtn"), share: $("shareBtn")
 };
-let current = null;      // { file, url, duration, w, h }
-let zipBlob = null, zipName = "frames.zip";
-let cancelled = false, running = false;
+const LOCKABLE = [el.pick, el.mode, el.clearZone, el.padTime, el.sens, el.pre, el.post,
+  el.scanFps, el.fps, el.size, el.quality, el.start, el.end];
 
-const pad = (n, w) => String(n).padStart(w, "0");
+let current = null;      // { file, url, duration, w, h }
+let zone = null;         // { x, y, w, h } as fractions of the frame, or null for whole frame
+let scan = null;         // cached motion scan
+let padVideo = null;
+let zipBlob = null, zipName = "frames.zip";
+let cancelled = false, running = false, fpsTouched = false;
+
+const pad2 = (n, w) => String(n).padStart(w, "0");
 const fmtDur = s => { const m = Math.floor(s / 60); return (m ? m + "m " : "") + (s - m * 60).toFixed(1) + "s"; };
 const fmtMB = b => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + " MB";
 const safeName = n => n.replace(/\.[^.]+$/, "").replace(/[^\w\-]+/g, "_").slice(0, 40) || "video";
+const isMotion = () => el.mode.value === "motion";
+const median = arr => {
+  if (!arr.length) return 0;
+  const a = Array.from(arr).sort((x, y) => x - y), m = a.length >> 1;
+  return a.length & 1 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
 
 function setStatus(msg, cls) { el.status.textContent = msg; el.status.className = "status" + (cls ? " " + cls : ""); }
 
@@ -242,6 +313,8 @@ function range() {
   if (!isFinite(e) || e <= 0 || e > current.duration) e = current.duration;
   return { s, e: Math.max(s, e) };
 }
+
+/* every-frame plan */
 function plan() {
   const r = range();
   if (!r) return null;
@@ -254,8 +327,29 @@ function plan() {
     if (t > r.e + 1e-6) break;
     times.push(Math.min(t, Math.max(0, current.duration - 0.001)));
   }
-  return { fps, times, r };
+  return { fps, times, r, meta: null };
 }
+
+/* motion plan, built from the cached scan windows */
+function nearestIndex(t) {
+  const i = Math.round((t - scan.start) * scan.fps);
+  return Math.max(0, Math.min(scan.scores.length - 1, i));
+}
+function motionPlan() {
+  const fps = parseFloat(el.fps.value);
+  const times = [], meta = [];
+  scan.windows.forEach((w, wi) => {
+    const n = Math.floor((w.e - w.s) * fps + 1e-6) + 1;
+    for (let j = 0; j < n; j++) {
+      const t = w.s + j / fps;
+      if (t > w.e + 1e-6) break;
+      times.push(Math.min(t, Math.max(0, current.duration - 0.001)));
+      meta.push({ window: wi + 1, side: w.side, motion: scan.scores[nearestIndex(t)] });
+    }
+  });
+  return { fps, times, meta, r: { s: scan.start, e: scan.end } };
+}
+
 function outSize() {
   const max = parseInt(el.size.value, 10);
   let w = current.w, h = current.h;
@@ -265,36 +359,109 @@ function outSize() {
   }
   return { w: w - (w % 2), h: h - (h % 2) };
 }
+
 function updateEstimate() {
   if (!current) { el.estimate.textContent = ""; return; }
-  const p = plan();
   const s = outSize();
   const q = parseInt(el.quality.value, 10) / 100;
-  // rough JPEG size guess per frame
   const per = s.w * s.h * (0.08 + q * 0.35);
+  if (isMotion()) {
+    if (!scan) {
+      el.estimate.innerHTML = "Scan first to see how many frames will be kept.";
+      return;
+    }
+    const n = motionPlan().times.length;
+    el.estimate.innerHTML = "About <b>" + n + " frames</b> at " + s.w + "&times;" + s.h +
+      ", roughly <b>" + fmtMB(per * n) + "</b> total.";
+    return;
+  }
+  const p = plan();
   el.estimate.innerHTML = "About <b>" + p.times.length + " frames</b> at " + s.w + "&times;" + s.h +
     ", roughly <b>" + fmtMB(per * p.times.length) + "</b> total.";
 }
-["change", "input"].forEach(ev => {
-  [el.fps, el.size, el.start, el.end].forEach(x => x.addEventListener(ev, updateEstimate));
-});
-el.quality.addEventListener("input", () => { el.qVal.textContent = el.quality.value; updateEstimate(); });
 
+function refreshGoLabel() {
+  if (running) return;
+  const motion = isMotion();
+  el.rescan.classList.toggle("hidden", !(motion && scan));
+  if (!current) {
+    el.go.disabled = true;
+    el.go.textContent = motion ? "Scan for motion" : "Extract frames";
+    return;
+  }
+  if (!motion) { el.go.textContent = "Extract frames"; el.go.disabled = false; return; }
+  if (!scan) { el.go.textContent = "Scan for motion"; el.go.disabled = false; return; }
+  const n = motionPlan().times.length;
+  el.go.disabled = n === 0;
+  el.go.textContent = n ? "Extract " + n + " frames" : "No motion found. Raise sensitivity.";
+}
+
+function invalidateScan() {
+  scan = null;
+  el.graph.classList.add("hidden");
+  el.summary.classList.add("hidden");
+  refreshGoLabel();
+  updateEstimate();
+}
+
+function lockUI(on) {
+  LOCKABLE.forEach(x => x.disabled = on);
+  el.zonePad.style.pointerEvents = on ? "none" : "";
+  el.stop.classList.toggle("hidden", !on);
+  if (on) { el.go.disabled = true; el.rescan.classList.add("hidden"); }
+}
+
+/* mode + settings listeners */
+function applyMode() {
+  el.motionBox.classList.toggle("hidden", !isMotion());
+  el.fpsLabel.textContent = isMotion() ? "Frames per second saved (inside motion)" : "Frames per second";
+  if (!fpsTouched) el.fps.value = isMotion() ? "10" : "5";
+  if (!isMotion()) { el.graph.classList.add("hidden"); el.summary.classList.add("hidden"); }
+  else if (scan) { el.graph.classList.remove("hidden"); el.summary.classList.remove("hidden"); drawGraph(); }
+  refreshGoLabel();
+  updateEstimate();
+}
+el.mode.addEventListener("change", applyMode);
+el.fps.addEventListener("change", () => { fpsTouched = true; refreshGoLabel(); updateEstimate(); });
+[el.size].forEach(x => x.addEventListener("change", updateEstimate));
+el.quality.addEventListener("input", () => { el.qVal.textContent = el.quality.value; updateEstimate(); });
+[el.start, el.end].forEach(x => x.addEventListener("input", () => { if (scan) invalidateScan(); else updateEstimate(); }));
+el.scanFps.addEventListener("change", invalidateScan);
+[el.sens, el.pre, el.post].forEach(x => x.addEventListener("input", () => {
+  if (!scan) return;
+  computeWindows(); drawGraph(); updateSummary(); refreshGoLabel(); updateEstimate();
+}));
+
+/* ---------- loading a video ---------- */
 el.pick.addEventListener("click", () => el.file.click());
 el.file.addEventListener("change", () => {
   const f = el.file.files && el.file.files[0];
   if (f) loadFile(f);
 });
 
+function makeVideo(url) {
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto";
+  v.src = url;
+  return new Promise((res, rej) => {
+    v.onloadedmetadata = () => res(v);
+    v.onerror = () => rej(new Error("video failed to load"));
+  });
+}
+
 function loadFile(f) {
   if (running) return;
   if (current) URL.revokeObjectURL(current.url);
-  zipBlob = null;
+  if (padVideo) { padVideo.removeAttribute("src"); padVideo.load(); padVideo = null; }
+  zipBlob = null; zone = null; scan = null;
+  el.zoneTxt.textContent = "whole frame";
   el.done.classList.add("hidden");
   el.thumbs.innerHTML = "";
+  el.graph.classList.add("hidden");
+  el.summary.classList.add("hidden");
   el.bar.style.width = "0%";
   current = null;
-  el.go.disabled = true;
+  refreshGoLabel();
   setStatus("Reading video…");
   const url = URL.createObjectURL(f);
   const v = el.preview;
@@ -310,9 +477,10 @@ function loadFile(f) {
     el.info.innerHTML = "<b>" + f.name.replace(/</g, "&lt;") + "</b><br>" +
       fmtDur(v.duration) + " &middot; " + v.videoWidth + "&times;" + v.videoHeight + " &middot; " + fmtMB(f.size);
     el.end.placeholder = "end (" + v.duration.toFixed(1) + ")";
-    el.go.disabled = false;
     setStatus("Ready.");
+    refreshGoLabel();
     updateEstimate();
+    initPad().catch(e => console.error(e));
   };
   v.onerror = () => setStatus("This browser could not play that video. Try a different file.", "bad");
 }
@@ -339,21 +507,245 @@ function seekTo(video, t) {
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
 const toBlob = (canvas, q) => new Promise(r => canvas.toBlob(r, "image/jpeg", q));
 
-async function extract() {
+/* ---------- zone drawing ---------- */
+const pad = el.zonePad;
+const pctx = pad.getContext("2d");
+let padBusy = false, padWant = null, drawing = null;
+
+async function initPad() {
+  padVideo = await makeVideo(current.url);
+  const sc = Math.min(1, 640 / current.w);
+  pad.width = Math.round(current.w * sc);
+  pad.height = Math.round(current.h * sc);
+  el.padTime.max = String(Math.max(0.1, current.duration));
+  el.padTime.value = "0";
+  await padSeek(0);
+}
+async function padSeek(t) {
+  if (!padVideo) return;
+  if (padBusy) { padWant = t; return; }
+  padBusy = true;
+  try {
+    await seekTo(padVideo, Math.min(t, Math.max(0, current.duration - 0.05)));
+    drawPad();
+  } catch (e) { console.error(e); }
+  padBusy = false;
+  if (padWant !== null) { const w = padWant; padWant = null; padSeek(w); }
+}
+function drawPad() {
+  if (!padVideo) return;
+  const W = pad.width, H = pad.height;
+  pctx.drawImage(padVideo, 0, 0, W, H);
+  if (zone && zone.w > 0 && zone.h > 0) {
+    const x = zone.x * W, y = zone.y * H, w = zone.w * W, h = zone.h * H;
+    pctx.fillStyle = "rgba(0,0,0,.55)";
+    pctx.fillRect(0, 0, W, y);
+    pctx.fillRect(0, y + h, W, H - y - h);
+    pctx.fillRect(0, y, x, h);
+    pctx.fillRect(x + w, y, W - x - w, h);
+    pctx.strokeStyle = "#f5a524";
+    pctx.lineWidth = Math.max(2, W / 200);
+    pctx.strokeRect(x, y, w, h);
+  }
+}
+function padPoint(e) {
+  const r = pad.getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+  };
+}
+function updateZoneText() {
+  el.zoneTxt.textContent = zone ? Math.round(zone.w * 100) + "% × " + Math.round(zone.h * 100) + "% of frame" : "whole frame";
+}
+pad.addEventListener("pointerdown", e => {
+  if (!current || running) return;
+  e.preventDefault();
+  pad.setPointerCapture(e.pointerId);
+  const p = padPoint(e);
+  drawing = { x0: p.x, y0: p.y };
+  zone = { x: p.x, y: p.y, w: 0, h: 0 };
+  drawPad();
+});
+pad.addEventListener("pointermove", e => {
+  if (!drawing) return;
+  const p = padPoint(e);
+  zone = { x: Math.min(drawing.x0, p.x), y: Math.min(drawing.y0, p.y),
+           w: Math.abs(p.x - drawing.x0), h: Math.abs(p.y - drawing.y0) };
+  drawPad();
+});
+const endDraw = () => {
+  if (!drawing) return;
+  drawing = null;
+  if (zone && (zone.w * current.w < 24 || zone.h * current.h < 24)) zone = null;
+  updateZoneText();
+  drawPad();
+  invalidateScan();
+};
+pad.addEventListener("pointerup", endDraw);
+pad.addEventListener("pointercancel", endDraw);
+el.clearZone.addEventListener("click", () => { zone = null; updateZoneText(); drawPad(); invalidateScan(); });
+el.padTime.addEventListener("input", () => padSeek(parseFloat(el.padTime.value) || 0));
+
+/* ---------- motion scan ---------- */
+async function runScan() {
   if (!current || running) return;
   running = true; cancelled = false;
   zipBlob = null;
   el.done.classList.add("hidden");
   el.thumbs.innerHTML = "";
-  el.go.disabled = true;
-  el.stop.classList.remove("hidden");
-  [el.fps, el.size, el.quality, el.start, el.end, el.pick].forEach(x => x.disabled = true);
+  lockUI(true);
+  el.bar.style.width = "0%";
+  let v = null;
+  try {
+    v = await makeVideo(current.url);
+    const r = range();
+    const fps = parseInt(el.scanFps.value, 10);
+    const z = zone
+      ? { x: zone.x * current.w, y: zone.y * current.h, w: zone.w * current.w, h: zone.h * current.h }
+      : { x: 0, y: 0, w: current.w, h: current.h };
+    const sw = Math.max(32, Math.min(192, Math.round(z.w)));
+    const sh = Math.max(32, Math.round(sw * z.h / z.w));
+    const c = document.createElement("canvas");
+    c.width = sw; c.height = sh;
+    const cx = c.getContext("2d", { willReadFrequently: true });
+    const n = Math.max(2, Math.floor((r.e - r.s) * fps + 1e-6) + 1);
+    const times = [], scores = [], cxs = [];
+    let prev = null;
+    const npx = sw * sh;
+    for (let i = 0; i < n; i++) {
+      if (cancelled) throw new Error("stopped");
+      const t = Math.min(r.s + i / fps, Math.max(0, current.duration - 0.001));
+      await seekTo(v, t);
+      cx.drawImage(v, z.x, z.y, z.w, z.h, 0, 0, sw, sh);
+      const d = cx.getImageData(0, 0, sw, sh).data;
+      let score = 0, cxv = null;
+      if (prev) {
+        // a pixel counts as "changed" when any color channel moved by more than 28 (of 255)
+        let count = 0, sumx = 0;
+        for (let p = 0, k = 0; p < npx; p++, k += 4) {
+          let m = d[k] - prev[k]; if (m < 0) m = -m;
+          let g = d[k + 1] - prev[k + 1]; if (g < 0) g = -g;
+          let b = d[k + 2] - prev[k + 2]; if (b < 0) b = -b;
+          if (m > 28 || g > 28 || b > 28) { count++; sumx += p % sw; }
+        }
+        score = count / npx * 100;
+        if (count >= 3) cxv = (z.x + (sumx / count / sw) * z.w) / current.w;
+      }
+      prev = Uint8ClampedArray.from(d);
+      times.push(t); scores.push(score); cxs.push(cxv);
+      el.bar.style.width = ((i + 1) / n * 100).toFixed(1) + "%";
+      setStatus("Scanning for motion… " + t.toFixed(1) + "s of " + r.e.toFixed(1) + "s");
+      if (i % 6 === 5) await nextPaint();
+    }
+    scan = { times, scores, cx: cxs, fps, start: r.s, end: r.e, windows: [], thr: 0,
+             zone: zone ? Object.assign({}, zone) : null };
+    computeWindows();
+    el.graph.classList.remove("hidden");
+    el.summary.classList.remove("hidden");
+    drawGraph();
+    updateSummary();
+    setStatus("Scan done. Adjust sensitivity if the shaded bands look off.", "ok");
+  } catch (err) {
+    scan = null;
+    setStatus(err.message === "stopped" ? "Scan stopped." : "Problem: " + err.message, err.message === "stopped" ? "" : "bad");
+  } finally {
+    if (v) { v.removeAttribute("src"); v.load(); }
+    running = false;
+    lockUI(false);
+    refreshGoLabel();
+    updateEstimate();
+  }
+}
 
-  const video = document.createElement("video");
-  video.muted = true; video.playsInline = true; video.preload = "auto";
-  video.src = current.url;
+function computeWindows() {
+  if (!scan) return;
+  const sc = scan.scores, ts = scan.times, fps = scan.fps;
+  const med = median(sc);
+  const mad = median(sc.map(v => Math.abs(v - med))) * 1.4826;
+  const k = { high: 4, medium: 7, low: 12 }[el.sens.value] || 7;
+  const thr = med + k * Math.max(mad, 0.2);
+  const pre = Math.max(0, parseFloat(el.pre.value) || 0);
+  const post = Math.max(0, parseFloat(el.post.value) || 0);
+  const gap = Math.max(1, Math.round(fps * 1.0));
+  const runs = [];
+  let i = 0;
+  while (i < sc.length) {
+    if (sc[i] > thr) {
+      let j = i, last = i, hits = 0;
+      while (j < sc.length && j - last <= gap) { if (sc[j] > thr) { last = j; hits++; } j++; }
+      if (hits >= 2) runs.push([i, last]);
+      i = last + 1;
+    } else i++;
+  }
+  const wins = [];
+  for (const [a, b] of runs) {
+    const s = Math.max(scan.start, ts[a] - pre), e = Math.min(scan.end, ts[b] + post);
+    const lastW = wins[wins.length - 1];
+    if (lastW && s <= lastW.e) { lastW.e = Math.max(lastW.e, e); lastW.runs.push([a, b]); }
+    else wins.push({ s, e, runs: [[a, b]] });
+  }
+  for (const w of wins) {
+    let sum = 0, n = 0;
+    for (const [a, b] of w.runs) for (let q = a; q <= b; q++) if (sc[q] > thr && scan.cx[q] !== null) { sum += scan.cx[q]; n++; }
+    w.side = n ? (sum / n < 0.5 ? "L" : "R") : "";
+  }
+  scan.thr = thr;
+  scan.windows = wins;
+}
 
-  const p = plan();
+function updateSummary() {
+  if (!scan) return;
+  const span = scan.end - scan.start;
+  const kept = scan.windows.reduce((a, w) => a + (w.e - w.s), 0);
+  const sides = scan.windows.map(w => w.side || "?").join(" ");
+  el.summary.innerHTML = "<b>" + scan.windows.length + " motion events</b>" +
+    (scan.windows.length ? " (" + sides + ")" : "") + ". Keeping <b>" + kept.toFixed(1) + " s</b> of " + span.toFixed(1) + " s.";
+}
+
+function drawGraph() {
+  if (!scan) return;
+  const cv = el.graph;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 600, cssH = 90;
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cssW, cssH);
+  const span = Math.max(0.001, scan.end - scan.start);
+  const X = t => (t - scan.start) / span * cssW;
+  const top = 6, bottom = cssH - 16;
+  let mx = scan.thr * 1.6;
+  for (const v of scan.scores) if (v > mx) mx = v;
+  mx = Math.max(mx, 0.5);
+  const Y = v => bottom - (v / mx) * (bottom - top);
+  g.fillStyle = "rgba(245,165,36,.20)";
+  for (const w of scan.windows) g.fillRect(X(w.s), 0, Math.max(1, X(w.e) - X(w.s)), bottom);
+  g.strokeStyle = "#ff6b6b"; g.lineWidth = 1; g.setLineDash([4, 4]);
+  g.beginPath(); g.moveTo(0, Y(scan.thr)); g.lineTo(cssW, Y(scan.thr)); g.stroke();
+  g.setLineDash([]);
+  g.strokeStyle = "#f5a524"; g.lineWidth = 1.5;
+  g.beginPath();
+  scan.scores.forEach((v, i) => { const x = X(scan.times[i]), y = Y(v); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  g.fillStyle = "#8da0b3"; g.font = "11px system-ui, sans-serif";
+  g.textAlign = "left"; g.fillText(scan.start.toFixed(1) + "s", 2, cssH - 3);
+  g.textAlign = "right"; g.fillText(scan.end.toFixed(1) + "s", cssW - 2, cssH - 3);
+}
+window.addEventListener("resize", () => { if (scan && !el.graph.classList.contains("hidden")) drawGraph(); });
+
+/* ---------- extraction ---------- */
+async function extract() {
+  if (!current || running) return;
+  const motion = isMotion();
+  if (motion && !scan) return;
+  running = true; cancelled = false;
+  zipBlob = null;
+  el.done.classList.add("hidden");
+  el.thumbs.innerHTML = "";
+  lockUI(true);
+
+  const p = motion ? motionPlan() : plan();
   const { w, h } = outSize();
   const q = parseInt(el.quality.value, 10) / 100;
   const base = safeName(current.file.name);
@@ -361,16 +753,13 @@ async function extract() {
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d", { alpha: false });
   const zip = new ZipBuilder();
-  const rows = ["file,time_sec,width,height"];
+  const rows = ["file,time_sec,width,height,window,motion,side"];
   const total = p.times.length;
   let made = 0;
+  let video = null;
 
   try {
-    await new Promise((res, rej) => {
-      if (video.readyState >= 1) return res();
-      video.onloadedmetadata = () => res();
-      video.onerror = () => rej(new Error("video failed to load"));
-    });
+    video = await makeVideo(current.url);
     const digits = Math.max(5, String(total).length);
     for (let i = 0; i < total; i++) {
       if (cancelled) break;
@@ -379,9 +768,10 @@ async function extract() {
       ctx.drawImage(video, 0, 0, w, h);
       const blob = await toBlob(canvas, q);
       if (!blob) throw new Error("could not encode frame " + (i + 1));
-      const name = base + "_" + pad(i + 1, digits) + "_t" + t.toFixed(3) + "s.jpg";
+      const name = base + "_" + pad2(i + 1, digits) + "_t" + t.toFixed(3) + "s.jpg";
       await zip.addBlob(name, blob);
-      rows.push(name + "," + t.toFixed(3) + "," + w + "," + h);
+      const m = p.meta ? p.meta[i] : null;
+      rows.push([name, t.toFixed(3), w, h, m ? m.window : "", m ? m.motion.toFixed(2) : "", m ? m.side : ""].join(","));
       made++;
       if (made <= 8 || made % Math.ceil(total / 8) === 0) addThumb(blob);
       el.bar.style.width = ((i + 1) / total * 100).toFixed(1) + "%";
@@ -390,11 +780,12 @@ async function extract() {
     }
     if (made === 0) throw new Error("no frames were made");
     zip.addText("frames.csv", rows.join("\n") + "\n");
-    zip.addText("source.json", JSON.stringify({
+    const info = {
       source_file: current.file.name,
       duration_sec: +current.duration.toFixed(3),
       source_size: current.w + "x" + current.h,
       output_size: w + "x" + h,
+      mode: motion ? "motion" : "all",
       fps: p.fps,
       start_sec: p.r.s,
       end_sec: p.r.e,
@@ -402,9 +793,21 @@ async function extract() {
       frames: made,
       stopped_early: cancelled,
       created: new Date().toISOString()
-    }, null, 2) + "\n");
+    };
+    if (motion) {
+      info.motion = {
+        zone: scan.zone,
+        scan_fps: scan.fps,
+        sensitivity: el.sens.value,
+        threshold_percent_changed: +scan.thr.toFixed(3),
+        seconds_before: parseFloat(el.pre.value) || 0,
+        seconds_after: parseFloat(el.post.value) || 0,
+        windows: scan.windows.map((x, i) => ({ window: i + 1, start: +x.s.toFixed(3), end: +x.e.toFixed(3), side: x.side }))
+      };
+    }
+    zip.addText("source.json", JSON.stringify(info, null, 2) + "\n");
     zipBlob = zip.finish();
-    zipName = base + "_frames_" + made + ".zip";
+    zipName = base + (motion ? "_motion_" : "_frames_") + made + ".zip";
     el.done.classList.remove("hidden");
     el.save.textContent = "Save ZIP (" + fmtMB(zipBlob.size) + ")";
     const testFile = new File([zipBlob], zipName, { type: "application/zip" });
@@ -414,11 +817,11 @@ async function extract() {
     console.error(err);
     setStatus("Problem: " + err.message, "bad");
   } finally {
-    video.removeAttribute("src"); video.load();
+    if (video) { video.removeAttribute("src"); video.load(); }
     running = false;
-    el.stop.classList.add("hidden");
-    el.go.disabled = false;
-    [el.fps, el.size, el.quality, el.start, el.end, el.pick].forEach(x => x.disabled = false);
+    lockUI(false);
+    refreshGoLabel();
+    updateEstimate();
   }
 }
 function addThumb(blob) {
@@ -429,7 +832,10 @@ function addThumb(blob) {
   el.thumbs.appendChild(img);
 }
 
-el.go.addEventListener("click", extract);
+el.go.addEventListener("click", () => {
+  if (isMotion() && !scan) runScan(); else extract();
+});
+el.rescan.addEventListener("click", () => { invalidateScan(); runScan(); });
 el.stop.addEventListener("click", () => { cancelled = true; setStatus("Stopping…"); });
 el.save.addEventListener("click", () => {
   if (!zipBlob) return;
@@ -446,6 +852,8 @@ el.share.addEventListener("click", async () => {
     await navigator.share({ files: [new File([zipBlob], zipName, { type: "application/zip" })], title: zipName });
   } catch (e) { if (e.name !== "AbortError") setStatus("Share failed: " + e.message, "bad"); }
 });
+
+applyMode();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

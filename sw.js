@@ -1,5 +1,5 @@
 // Caches the app shell so the extractor opens offline after the first visit.
-const CACHE = "bt-frame-extractor-v1";
+const CACHE = "bt-frame-extractor-v2";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
