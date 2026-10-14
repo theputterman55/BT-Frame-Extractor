@@ -325,7 +325,11 @@ function plan() {
   for (let i = 0; i < count; i++) {
     const t = r.s + i / fps;
     if (t > r.e + 1e-6) break;
-    times.push(Math.min(t, Math.max(0, current.duration - 0.001)));
+    // Browsers often can't seek to the very last instant of a video, so stay
+    // a little short of the end and never repeat the same time twice.
+    const tt = Math.min(t, Math.max(0, current.duration - 0.06));
+    if (times.length && tt <= times[times.length - 1] + 1e-6) break;
+    times.push(tt);
   }
   return { fps, times, r, meta: null };
 }
@@ -343,7 +347,7 @@ function motionPlan() {
     for (let j = 0; j < n; j++) {
       const t = w.s + j / fps;
       if (t > w.e + 1e-6) break;
-      times.push(Math.min(t, Math.max(0, current.duration - 0.001)));
+      times.push(Math.min(t, Math.max(0, current.duration - 0.06)));
       meta.push({ window: wi + 1, side: w.side, motion: scan.scores[nearestIndex(t)] });
     }
   });
@@ -757,6 +761,7 @@ async function extract() {
   const total = p.times.length;
   let made = 0;
   let video = null;
+  let problem = "";   // set if a frame fails after some frames were already made
 
   try {
     video = await makeVideo(current.url);
@@ -764,10 +769,21 @@ async function extract() {
     for (let i = 0; i < total; i++) {
       if (cancelled) break;
       const t = p.times[i];
-      await seekTo(video, t);
-      ctx.drawImage(video, 0, 0, w, h);
-      const blob = await toBlob(canvas, q);
-      if (!blob) throw new Error("could not encode frame " + (i + 1));
+      let blob;
+      try {
+        try { await seekTo(video, t); }
+        catch (e1) {
+          // one retry, nudged a hair earlier, before giving up on this frame
+          await seekTo(video, Math.max(0, t - 0.05));
+        }
+        ctx.drawImage(video, 0, 0, w, h);
+        blob = await toBlob(canvas, q);
+        if (!blob) throw new Error("could not encode frame " + (i + 1));
+      } catch (e2) {
+        // Keep everything made so far instead of losing the whole run.
+        if (made > 0) { problem = e2.message; break; }
+        throw e2;
+      }
       const name = base + "_" + pad2(i + 1, digits) + "_t" + t.toFixed(3) + "s.jpg";
       await zip.addBlob(name, blob);
       const m = p.meta ? p.meta[i] : null;
@@ -791,7 +807,8 @@ async function extract() {
       end_sec: p.r.e,
       jpeg_quality: q,
       frames: made,
-      stopped_early: cancelled,
+      stopped_early: cancelled || !!problem,
+      problem: problem || undefined,
       created: new Date().toISOString()
     };
     if (motion) {
@@ -812,7 +829,8 @@ async function extract() {
     el.save.textContent = "Save ZIP (" + fmtMB(zipBlob.size) + ")";
     const testFile = new File([zipBlob], zipName, { type: "application/zip" });
     if (navigator.canShare && navigator.canShare({ files: [testFile] })) el.share.classList.remove("hidden");
-    setStatus((cancelled ? "Stopped. " : "Done. ") + made + " frames ready.", "ok");
+    if (problem) setStatus("Saved " + made + " frames. The last ones were skipped (" + problem + "). Your ZIP is ready.", "ok");
+    else setStatus((cancelled ? "Stopped. " : "Done. ") + made + " frames ready.", "ok");
   } catch (err) {
     console.error(err);
     setStatus("Problem: " + err.message, "bad");
